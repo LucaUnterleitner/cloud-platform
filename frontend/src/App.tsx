@@ -5,6 +5,7 @@ import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
 import VMsPage from './pages/VMsPage'
 import CreateVMPage from './pages/CreateVMPage'
+import CreateVMFromTemplatePage from './pages/CreateVMFromTemplatePage'
 import VMDetailPage from './pages/VMDetailPage'
 import ClustersPage from './pages/ClustersPage'
 import CreateClusterPage from './pages/CreateClusterPage'
@@ -53,6 +54,18 @@ function App() {
           isAuthenticated ? (
             <Layout>
               <CreateVMPage />
+            </Layout>
+          ) : (
+            <Navigate to="/login" />
+          )
+        }
+      />
+      <Route
+        path="/vms/from-template"
+        element={
+          isAuthenticated ? (
+            <Layout>
+              <CreateVMFromTemplatePage />
             </Layout>
           ) : (
             <Navigate to="/login" />

@@ -1,9 +1,11 @@
 """
 Virtual Machine management endpoints.
 """
-from typing import Optional
+from typing import Optional, List
 from datetime import datetime
+import asyncio
 import logging
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, status, Query, BackgroundTasks, Response
 from fastapi.responses import HTMLResponse
@@ -20,6 +22,7 @@ from app.models.vm_disk import VMDisk
 from app.models.iso_image import ISOImage
 from app.schemas.virtual_machine import (
     VMCreate,
+    VMFromTemplateCreate,
     VMUpdate,
     VMResponse,
     VMListResponse,
@@ -383,6 +386,276 @@ async def create_vm(
     return vm
 
 
+async def _resolve_cluster(
+    db: AsyncSession,
+    cluster_id: Optional[str],
+    org_context: OrgContext,
+) -> ProxmoxCluster:
+    """Return the requested cluster if the organization may use it (else auto-select)."""
+    accessible = or_(
+        ProxmoxCluster.organization_id == org_context.org_id,
+        ProxmoxCluster.is_shared == True,  # noqa: E712
+    )
+
+    if cluster_id:
+        result = await db.execute(
+            select(ProxmoxCluster).where(
+                ProxmoxCluster.id == cluster_id,
+                ProxmoxCluster.is_active == True,  # noqa: E712
+                ProxmoxCluster.deleted_at.is_(None),
+                accessible,
+            )
+        )
+    else:
+        result = await db.execute(
+            select(ProxmoxCluster).where(
+                ProxmoxCluster.is_active == True,  # noqa: E712
+                ProxmoxCluster.deleted_at.is_(None),
+                accessible,
+            ).limit(1)
+        )
+
+    cluster = result.scalar_one_or_none()
+    if not cluster:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Proxmox cluster not found or not accessible by your organization",
+        )
+    return cluster
+
+
+def _parse_disk_size_gb(config: dict) -> int:
+    """Extract the boot disk size (GB) from a Proxmox VM config (e.g. scsi0)."""
+    import re
+
+    for key in ("scsi0", "virtio0", "sata0", "ide0"):
+        value = config.get(key)
+        if not isinstance(value, str):
+            continue
+        match = re.search(r"size=(\d+(?:\.\d+)?)([GMT])", value)
+        if not match:
+            continue
+        size, unit = float(match.group(1)), match.group(2)
+        if unit == "M":
+            return max(1, int(size / 1024))
+        if unit == "T":
+            return int(size * 1024)
+        return int(size)
+    return 0
+
+
+@router.get("/templates", response_model=List[dict])
+async def list_vm_templates(
+    cluster_id: Optional[str] = Query(None, description="Proxmox cluster to query"),
+    org_context: OrgContext = Depends(RequirePermission(Permission.VM_READ)),
+    db: AsyncSession = Depends(get_db),
+) -> List[dict]:
+    """
+    List all QEMU templates available for cloning.
+
+    Requires: VM_READ permission
+    """
+    cluster = await _resolve_cluster(db, cluster_id, org_context)
+    service = ProxmoxService(cluster)
+
+    try:
+        templates = service.get_templates()
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to read templates from Proxmox: {e}",
+        )
+
+    for template in templates:
+        template["cluster_id"] = cluster.id
+        template["cluster_name"] = cluster.name
+    return templates
+
+
+@router.post("/from-template", response_model=VMResponse, status_code=status.HTTP_201_CREATED)
+async def create_vm_from_template(
+    vm_data: VMFromTemplateCreate,
+    org_context: OrgContext = Depends(RequirePermission(Permission.VM_CREATE)),
+    db: AsyncSession = Depends(get_db),
+) -> VirtualMachine:
+    """
+    Clone a VM from a Proxmox template (full clone) and register it.
+
+    Quota is checked before the clone starts, so an organization cannot exceed
+    its limits by cloning.
+
+    Requires: VM_CREATE permission
+    """
+    cluster = await _resolve_cluster(db, vm_data.proxmox_cluster_id, org_context)
+    service = ProxmoxService(cluster)
+
+    # 1. Locate the template in the cluster
+    try:
+        templates = service.get_templates(node=vm_data.template_node)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to read templates from Proxmox: {e}",
+        )
+
+    template = next(
+        (t for t in templates if t["vmid"] == vm_data.template_vmid),
+        None,
+    )
+    if not template:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Template {vm_data.template_vmid} not found in cluster '{cluster.name}'",
+        )
+
+    template_node = template["node"]
+
+    # 2. Derive resources from the template, apply overrides
+    try:
+        template_config = service.get_vm_template_info(template_node, template["vmid"])
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Failed to read template configuration: {e}",
+        )
+
+    cpu_cores = vm_data.cpu_cores or int(template_config.get("cores", 2))
+    memory_mb = vm_data.memory_mb or int(template_config.get("memory", 2048))
+    disk_gb = _parse_disk_size_gb(template_config)
+
+    # 3. Quota check BEFORE cloning
+    quota_service = QuotaService(db)
+    quota_check = await quota_service.check_quota_availability(
+        organization_id=org_context.org_id,
+        cpu_cores=cpu_cores,
+        memory_gb=memory_mb / 1024,
+        storage_gb=disk_gb,
+        vm_count=1,
+    )
+    if not quota_check.is_available:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Quota exceeded: {', '.join(quota_check.exceeded_resources)}",
+        )
+
+    # 4. Clone on the Proxmox side
+    try:
+        new_vmid = service.get_next_vmid()
+        task_id = service.clone_vm(
+            node=template_node,
+            template_vmid=template["vmid"],
+            new_vmid=new_vmid,
+            name=vm_data.name,
+            full=True,
+            storage=vm_data.storage_pool,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Proxmox rejected the clone: {e}",
+        )
+
+    # 5. Wait (bounded) for the clone task
+    clone_ok = True
+    clone_error = None
+    for _ in range(60):  # up to ~120s
+        await asyncio.sleep(2)
+        try:
+            task_status = service.get_task_status(template_node, task_id)
+        except Exception:  # keep waiting on transient errors
+            continue
+        if task_status.get("status") == "stopped":
+            exit_status = task_status.get("exitstatus")
+            clone_ok = exit_status == "OK"
+            clone_error = None if clone_ok else exit_status
+            break
+
+    # 6. Register the VM in the database
+    if clone_ok:
+        # Templates are frequently built without a NIC -> a clone would be unreachable
+        try:
+            service.ensure_network_interface(
+                node=template_node,
+                vmid=new_vmid,
+                bridge=os.getenv("DEFAULT_VM_BRIDGE", "vmbr0"),
+            )
+        except Exception as e:
+            logger.warning(f"VM {new_vmid} cloned but network interface could not be added: {e}")
+
+    vm = VirtualMachine(
+        name=vm_data.name,
+        hostname=vm_data.hostname or vm_data.name,
+        description=vm_data.description,
+        organization_id=org_context.org_id,
+        owner_id=org_context.user.id,
+        proxmox_cluster_id=cluster.id,
+        proxmox_vmid=new_vmid,
+        proxmox_node=template_node,
+        cpu_cores=cpu_cores,
+        cpu_sockets=1,
+        memory_mb=memory_mb,
+        os_type=template_config.get("ostype"),
+        status="stopped" if clone_ok else "error",
+        power_state="off",
+        provisioned_at=datetime.utcnow() if clone_ok else None,
+        tags=["from-template"],
+    )
+    db.add(vm)
+    await db.flush()
+
+    storage_name = vm_data.storage_pool
+    if not storage_name:
+        scsi0 = template_config.get("scsi0") or template_config.get("virtio0") or ""
+        storage_name = scsi0.split(":", 1)[0] if ":" in scsi0 else "local-lvm"
+
+    db.add(
+        VMDisk(
+            vm_id=vm.id,
+            disk_index=0,
+            disk_interface="scsi",
+            disk_number=0,
+            storage_pool=storage_name,
+            size_gb=disk_gb,
+            disk_format=None,
+            is_boot_disk=True,
+            is_cdrom=False,
+            status="ready" if clone_ok else "error",
+        )
+    )
+
+    await db.commit()
+    await db.refresh(vm)
+
+    if not clone_ok:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Clone task failed: {clone_error}",
+        )
+
+    # 7. Reserve quota
+    await quota_service.increment_usage(
+        organization_id=org_context.org_id,
+        cpu_cores=cpu_cores,
+        memory_gb=memory_mb / 1024,
+        storage_gb=disk_gb,
+        vm_count=1,
+    )
+
+    # 8. Optionally start the cloned VM
+    if vm_data.start_after_clone:
+        try:
+            service.start_vm(template_node, new_vmid)
+            vm.status = "running"
+            vm.power_state = "on"
+            vm.started_at = datetime.utcnow()
+            await db.commit()
+            await db.refresh(vm)
+        except Exception as e:
+            logger.warning(f"VM {new_vmid} cloned but could not be started: {e}")
+
+    return vm
+
+
 @router.get("/{vm_id}", response_model=VMResponse)
 async def get_vm(
     vm_id: str,
@@ -521,9 +794,21 @@ async def delete_vm(
     cpu_cores = vm.cpu_cores
     memory_gb = vm.memory_mb / 1024
 
-    # Delete from Proxmox
+    # Delete from Proxmox (stop first - Proxmox refuses to destroy running VMs)
     try:
         proxmox_service = ProxmoxService(vm.proxmox_cluster)
+        try:
+            current = proxmox_service.get_vm_status(vm.proxmox_node, vm.proxmox_vmid)
+            if (current or {}).get("status") == "running":
+                proxmox_service.stop_vm(vm.proxmox_node, vm.proxmox_vmid)
+                for _ in range(30):  # wait up to ~60s for the stop task
+                    await asyncio.sleep(2)
+                    state = proxmox_service.get_vm_status(vm.proxmox_node, vm.proxmox_vmid)
+                    if (state or {}).get("status") != "running":
+                        break
+        except Exception as e:
+            logger.warning(f"Could not stop VM {vm.proxmox_vmid} before delete: {e}")
+
         proxmox_service.delete_vm(vm.proxmox_node, vm.proxmox_vmid)
     except Exception as e:
         # Log error but continue with soft delete

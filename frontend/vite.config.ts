@@ -10,6 +10,13 @@ export default defineConfig({
     port: 3000,
     watch: {
       usePolling: true
+    },
+    proxy: {
+      // Dev server and reverse proxy both forward /api to the FastAPI container
+      '/api': {
+        target: process.env.VITE_PROXY_TARGET || 'http://api:8000',
+        changeOrigin: true
+      }
     }
   },
   resolve: {

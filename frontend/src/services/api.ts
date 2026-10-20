@@ -148,6 +148,37 @@ export const vmsApi = {
     return response.data
   },
 
+  listTemplates: async () => {
+    const response = await api.get('/vms/templates')
+    return response.data as Array<{
+      vmid: number
+      name: string
+      node: string
+      cores: number | null
+      memory_mb: number | null
+      ostype: string | null
+      status: string
+      cluster_id: string
+      cluster_name: string
+    }>
+  },
+
+  createFromTemplate: async (data: {
+    name: string
+    hostname?: string
+    description?: string
+    template_vmid: number
+    template_node?: string
+    proxmox_cluster_id?: string
+    storage_pool?: string
+    cpu_cores?: number
+    memory_mb?: number
+    start_after_clone?: boolean
+  }) => {
+    const response = await api.post('/vms/from-template', data)
+    return response.data
+  },
+
   update: async (vmId: string, data: {
     name?: string
     hostname?: string

@@ -88,6 +88,28 @@ class VMCreate(BaseModel):
     )
 
 
+class VMFromTemplateCreate(BaseModel):
+    """Schema for cloning a VM from a Proxmox template.
+
+    The template is cloned on the Proxmox side (full clone, independent disks);
+    only the resulting VM is tracked in the database.
+    """
+
+    name: str = Field(..., min_length=1, max_length=255)
+    hostname: Optional[str] = Field(None, max_length=255)
+    description: Optional[str] = None
+
+    template_vmid: int = Field(..., ge=1, description="VMID of the template")
+    template_node: Optional[str] = Field(None, max_length=100, description="Node of the template")
+    proxmox_cluster_id: Optional[str] = Field(None, description="Cluster (default: auto-select)")
+
+    # Optional overrides / placement
+    storage_pool: Optional[str] = Field(None, max_length=100, description="Target Proxmox storage")
+    cpu_cores: Optional[int] = Field(None, ge=1, le=128)
+    memory_mb: Optional[int] = Field(None, ge=512, le=524288)
+    start_after_clone: bool = Field(False, description="Start the VM after cloning")
+
+
 class VMUpdate(BaseModel):
     """Schema for updating VM configuration."""
 

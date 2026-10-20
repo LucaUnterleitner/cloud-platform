@@ -8,7 +8,7 @@ services:
     environment:
       POSTGRES_DB: cloudplatform
       POSTGRES_USER: cloudplatform
-      POSTGRES_PASSWORD: cloudplatform_dev_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-cloudplatform_dev_password}
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -26,7 +26,7 @@ services:
   redis:
     image: redis:7-alpine
     container_name: cloudplatform-redis
-    command: redis-server --requirepass cloudplatform_redis_password --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: redis-server --requirepass ${REDIS_PASSWORD:-cloudplatform_redis_password} --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -45,7 +45,7 @@ services:
     container_name: cloudplatform-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: cloudplatform
-      RABBITMQ_DEFAULT_PASS: cloudplatform_rabbit_password
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-cloudplatform_rabbit_password}
     ports:
       - "5672:5672"
       - "15672:15672"  # Management UI
@@ -74,10 +74,10 @@ services:
       - ENVIRONMENT=development
       - DEBUG=true
       - LOG_LEVEL=debug
-      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
-      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
-      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
-      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:${POSTGRES_PASSWORD:-cloudplatform_dev_password}@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:${RABBITMQ_PASSWORD:-cloudplatform_rabbit_password}@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/1
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-jwt-key-change-in-production-min-32-chars}
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
     depends_on:
@@ -101,10 +101,10 @@ services:
       - ./backend:/app
     environment:
       - ENVIRONMENT=development
-      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
-      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
-      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
-      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:${POSTGRES_PASSWORD:-cloudplatform_dev_password}@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:${RABBITMQ_PASSWORD:-cloudplatform_rabbit_password}@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/1
       - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
     depends_on:
       - postgres
@@ -124,10 +124,10 @@ services:
       - ./backend:/app
     environment:
       - ENVIRONMENT=development
-      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
-      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
-      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
-      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:${POSTGRES_PASSWORD:-cloudplatform_dev_password}@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:${RABBITMQ_PASSWORD:-cloudplatform_rabbit_password}@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/1
       - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
     depends_on:
       - postgres
@@ -147,10 +147,10 @@ services:
       - "5555:5555"
     environment:
       - ENVIRONMENT=development
-      - DATABASE_URL=postgresql+asyncpg://cloudplatform:cloudplatform_dev_password@postgres:5432/cloudplatform
-      - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
-      - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
-      - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
+      - DATABASE_URL=postgresql+asyncpg://cloudplatform:${POSTGRES_PASSWORD:-cloudplatform_dev_password}@postgres:5432/cloudplatform
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/0
+      - CELERY_BROKER_URL=amqp://cloudplatform:${RABBITMQ_PASSWORD:-cloudplatform_rabbit_password}@rabbitmq:5672//
+      - CELERY_RESULT_BACKEND=redis://:${REDIS_PASSWORD:-cloudplatform_redis_password}@redis:6379/1
       - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
     depends_on:
       - rabbitmq

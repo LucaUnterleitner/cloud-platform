@@ -452,6 +452,150 @@ class ProxmoxService:
             logger.error(f"Failed to get storage {storage} status on node {node}: {e}")
             raise
 
+    def get_templates(self, node: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        List all QEMU templates (template=1) of the cluster.
+
+        Args:
+            node: Limit the scan to one node (optional)
+
+        Returns:
+            List of dicts with vmid, name, node, cores, memory_mb, ostype, status
+        """
+        try:
+            proxmox = self._get_connection()
+            nodes = proxmox.nodes.get()
+            templates: List[Dict[str, Any]] = []
+
+            for node_info in nodes:
+                node_name = node_info.get("node")
+                if not node_name or (node and node_name != node):
+                    continue
+                if node_info.get("status") != "online":
+                    continue
+                try:
+                    vms = proxmox.nodes(node_name).qemu.get()
+                except Exception as exc:  # pragma: no cover - depends on PVE
+                    logger.warning(f"Cannot list VMs on node {node_name}: {exc}")
+                    continue
+
+                for vm in vms:
+                    if not vm.get("template"):
+                        continue
+                    cores = vm.get("maxcpu")
+                    ostype = vm.get("ostype")
+                    memory_mb = int(vm.get("maxmem", 0)) // (1024 * 1024)
+                    # The list endpoint does not expose all fields -> fall back to config
+                    if not cores or not ostype or not memory_mb:
+                        try:
+                            cfg = proxmox.nodes(node_name).qemu(vm["vmid"]).config.get()
+                            cores = cores or cfg.get("cores")
+                            ostype = ostype or cfg.get("ostype")
+                            memory_mb = memory_mb or int(cfg.get("memory", 0))
+                        except Exception as exc:  # pragma: no cover - PVE specific
+                            logger.debug(f"Cannot read config of template {vm['vmid']}: {exc}")
+                    templates.append({
+                        "vmid": int(vm["vmid"]),
+                        "name": vm.get("name") or f"template-{vm['vmid']}",
+                        "node": node_name,
+                        "cores": int(cores) if cores else None,
+                        "memory_mb": memory_mb or None,
+                        "ostype": ostype,
+                        "status": vm.get("status"),
+                    })
+
+            return sorted(templates, key=lambda t: (t["vmid"], t["node"]))
+
+        except Exception as e:
+            logger.error(f"Failed to list templates: {e}")
+            raise
+
+    def get_vm_template_info(self, node: str, vmid: int) -> Dict[str, Any]:
+        """Return the config of a template VM (used to derive default resources)."""
+        try:
+            proxmox = self._get_connection()
+            config = proxmox.nodes(node).qemu(vmid).config.get()
+            return config or {}
+        except Exception as e:
+            logger.error(f"Failed to read template {vmid} on {node}: {e}")
+            raise
+
+    def clone_vm(
+        self,
+        node: str,
+        template_vmid: int,
+        new_vmid: int,
+        name: str,
+        full: bool = True,
+        storage: Optional[str] = None,
+        target_node: Optional[str] = None,
+    ) -> str:
+        """
+        Clone a template VM into a new VM.
+
+        Args:
+            node: Node where the template lives
+            template_vmid: VMID of the template
+            new_vmid: VMID for the new VM (must be unused)
+            name: Name of the new VM
+            full: Full clone with independent disks (default True)
+            storage: Target storage (Proxmox storage name), optional
+            target_node: Target node for the clone, optional
+
+        Returns:
+            Task ID (UPID)
+        """
+        try:
+            proxmox = self._get_connection()
+
+            params: Dict[str, Any] = {
+                "newid": new_vmid,
+                "name": name,
+                "full": 1 if full else 0,
+            }
+            if storage:
+                params["storage"] = storage
+            if target_node:
+                params["target"] = target_node
+
+            task = proxmox.nodes(node).qemu(template_vmid).clone.post(**params)
+            logger.info(f"Cloning template {template_vmid} -> VM {new_vmid} ({name}) on {node}")
+            return task
+
+        except Exception as e:
+            logger.error(f"Failed to clone template {template_vmid} -> {new_vmid}: {e}")
+            raise
+
+    def ensure_network_interface(
+        self,
+        node: str,
+        vmid: int,
+        bridge: str = "vmbr0",
+        model: str = "virtio",
+    ) -> bool:
+        """
+        Make sure a cloned VM has at least one network interface.
+
+        Templates are often built without a NIC; a clone would then be
+        unreachable. Adds ``net0`` if no net* key exists.
+
+        Returns:
+            True if an interface was added, False if one already existed.
+        """
+        try:
+            proxmox = self._get_connection()
+            config = proxmox.nodes(node).qemu(vmid).config.get() or {}
+            if any(str(key).startswith("net") for key in config.keys()):
+                return False
+
+            proxmox.nodes(node).qemu(vmid).config.post(net0=f"{model},bridge={bridge}")
+            logger.info(f"Added net0 ({model}, bridge={bridge}) to VM {vmid} on {node}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to add network interface to VM {vmid}: {e}")
+            raise
+
     def get_storage_content(self, node: str, storage: str, content_type: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get content (ISOs, images, etc.) from a storage pool.
