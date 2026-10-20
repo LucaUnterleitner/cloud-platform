@@ -85,3 +85,7 @@ Thumbs.db
 *.temp
 .cache/
 backend/celerybeat-schedule
+
+# local environment
+.env
+.env.local

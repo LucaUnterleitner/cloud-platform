@@ -78,8 +78,8 @@ services:
       - REDIS_URL=redis://:cloudplatform_redis_password@redis:6379/0
       - CELERY_BROKER_URL=amqp://cloudplatform:cloudplatform_rabbit_password@rabbitmq:5672//
       - CELERY_RESULT_BACKEND=redis://:cloudplatform_redis_password@redis:6379/1
-      - JWT_SECRET_KEY=your-super-secret-jwt-key-change-in-production-min-32-chars
-      - CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-super-secret-jwt-key-change-in-production-min-32-chars}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
     depends_on:
       postgres:
         condition: service_healthy
@@ -170,7 +170,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - VITE_API_URL=http://localhost:8000/api/v1
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000/api/v1}
     depends_on:
       - api
     networks:
