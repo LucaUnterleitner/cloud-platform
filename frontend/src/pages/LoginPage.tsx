@@ -18,31 +18,64 @@ export default function LoginPage() {
       localStorage.setItem('access_token', data.access_token)
       localStorage.setItem('refresh_token', data.refresh_token)
 
-      // Now get user info with the stored token
-      const user = await authApi.getCurrentUser()
-      setAuth(user, data.access_token, data.refresh_token)
+      try {
+        // Now get user info with the stored token
+        const user = await authApi.getCurrentUser()
+        setAuth(user, data.access_token, data.refresh_token)
+      } catch (err: any) {
+        console.error('Failed to load current user:', err)
+        setError(
+          `Login accepted, but loading the profile failed ` +
+            `(HTTP ${err.response?.status ?? 'network'}).`
+        )
+        return
+      }
 
       // Load organizations and set the first one as current
       try {
         const organizations = await organizationsApi.listMyOrganizations()
-        console.log('Loaded organizations:', organizations)
 
         if (organizations && organizations.length > 0) {
           setOrganizations(organizations)
-          console.log('Set organizations, current org:', organizations[0].organization)
         } else {
           console.warn('No organizations found for user')
-          alert('No organizations found. Please contact an administrator.')
+          setError('No organizations found for this user. Please contact an administrator.')
+          return
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to load organizations:', err)
-        alert('Failed to load organizations. Please try again.')
+        setError(
+          `Login accepted, but loading organizations failed ` +
+            `(HTTP ${err.response?.status ?? 'network'}).`
+        )
+        return
       }
 
       navigate('/dashboard')
     },
     onError: (err: any) => {
-      setError(err.response?.data?.error?.message || 'Login failed')
+      const detail = err.response?.data?.detail
+      if (typeof detail === 'string') {
+        setError(detail)
+        return
+      }
+      if (Array.isArray(detail) && detail.length > 0) {
+        setError(detail.map((d: any) => d.msg).join('; '))
+        return
+      }
+      const nested = err.response?.data?.error?.message
+      if (nested) {
+        setError(nested)
+        return
+      }
+      if (err.response) {
+        setError(`Login failed (HTTP ${err.response.status})`)
+        return
+      }
+      setError(
+        `Server not reachable (${err.config?.baseURL || 'API'}). ` +
+          'Check the URL and that the portal is running.'
+      )
     },
   })
 
