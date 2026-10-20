@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type FormEvent } from 'react'
 import { Users, UserPlus, Shield, Trash2, RefreshCw, AlertCircle } from 'lucide-react'
 import { organizationsApi } from '../services/api'
 import { useAuthStore } from '../stores/authStore'
@@ -22,6 +22,20 @@ export default function OrganizationSettingsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const { currentOrganization, organizations, user } = useAuthStore()
+
+  // "Add user" form state
+  const [showAddUser, setShowAddUser] = useState(false)
+  const [addUserBusy, setAddUserBusy] = useState(false)
+  const [addUserError, setAddUserError] = useState<string | null>(null)
+  const [addUserInfo, setAddUserInfo] = useState<string | null>(null)
+  const [newUser, setNewUser] = useState({
+    email: '',
+    username: '',
+    password: '',
+    role: 'member',
+    first_name: '',
+    last_name: '',
+  })
 
   const currentMembership = organizations.find(
     o => o.organization.id === currentOrganization?.id
@@ -70,6 +84,40 @@ export default function OrganizationSettingsPage() {
       loadMembers()
     } catch (err: any) {
       alert(err.response?.data?.detail || 'Failed to remove member')
+    }
+  }
+
+  const handleCreateUser = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!isAdmin) return
+
+    setAddUserBusy(true)
+    setAddUserError(null)
+    setAddUserInfo(null)
+
+    try {
+      const created = await organizationsApi.createUser({
+        email: newUser.email.trim(),
+        username: newUser.username.trim() || undefined,
+        password: newUser.password || undefined,
+        role: newUser.role,
+        first_name: newUser.first_name.trim() || undefined,
+        last_name: newUser.last_name.trim() || undefined,
+      })
+      setAddUserInfo(
+        `${created.user?.email || newUser.email} wurde hinzugefügt (Rolle: ${created.role}).`
+      )
+      setNewUser({ email: '', username: '', password: '', role: 'member', first_name: '', last_name: '' })
+      setShowAddUser(false)
+      loadMembers()
+    } catch (err: any) {
+      const detail = err.response?.data?.detail
+      if (typeof detail === 'string') setAddUserError(detail)
+      else if (Array.isArray(detail)) setAddUserError(detail.map((d: any) => d.msg).join('; '))
+      else if (err.response?.status === 403) setAddUserError('Keine Berechtigung: nur Org-Admins dürfen Benutzer anlegen.')
+      else setAddUserError(err.response ? `Fehler (HTTP ${err.response.status})` : 'Server nicht erreichbar.')
+    } finally {
+      setAddUserBusy(false)
     }
   }
 
@@ -149,15 +197,123 @@ export default function OrganizationSettingsPage() {
                 <p className="text-sm text-gray-600 mt-1">{members.length} total members</p>
               </div>
             </div>
-            <button
-              onClick={loadMembers}
-              className="flex items-center px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            >
-              <RefreshCw className="w-4 h-4 mr-2" />
-              Refresh
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={loadMembers}
+                className="flex items-center px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Refresh
+              </button>
+              {isAdmin && (
+                <button
+                  onClick={() => { setShowAddUser(v => !v); setAddUserError(null); setAddUserInfo(null) }}
+                  className="flex items-center px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Benutzer hinzufügen
+                </button>
+              )}
+            </div>
           </div>
         </div>
+
+        {/* Add user form */}
+        {showAddUser && isAdmin && (
+          <form onSubmit={handleCreateUser} className="p-6 border-b border-gray-200 bg-gray-50">
+            <h3 className="text-base font-semibold text-gray-900 mb-1">Neuen Benutzer anlegen</h3>
+            <p className="text-sm text-gray-600 mb-4">
+              Existiert die E-Mail bereits, wird der Benutzer nur dieser Organisation hinzugefügt.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">E-Mail *</label>
+                <input
+                  type="email" required value={newUser.email}
+                  onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                  placeholder="vorname.nachname@lab.net"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Rolle *</label>
+                <select
+                  value={newUser.role}
+                  onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                >
+                  <option value="member">member – VMs erstellen/verwalten</option>
+                  <option value="admin">admin – zusätzlich Benutzer &amp; Quotas</option>
+                  <option value="viewer">viewer – nur ansehen</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Benutzername</label>
+                <input
+                  type="text" value={newUser.username}
+                  onChange={(e) => setNewUser({ ...newUser, username: e.target.value })}
+                  placeholder="leer = aus E-Mail ableiten"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Initialpasswort {newUser.email ? '' : '(nur neue Benutzer)'}
+                </label>
+                <input
+                  type="text" value={newUser.password}
+                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                  placeholder="mind. 8 Zeichen"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Vorname</label>
+                <input
+                  type="text" value={newUser.first_name}
+                  onChange={(e) => setNewUser({ ...newUser, first_name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Nachname</label>
+                <input
+                  type="text" value={newUser.last_name}
+                  onChange={(e) => setNewUser({ ...newUser, last_name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                />
+              </div>
+            </div>
+
+            {addUserError && (
+              <div className="mt-4 bg-red-50 border border-red-200 rounded-lg p-3 flex items-start">
+                <AlertCircle className="w-4 h-4 text-red-500 mr-2 flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-red-700">{addUserError}</p>
+              </div>
+            )}
+
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                type="submit" disabled={addUserBusy}
+                className="px-4 py-2 text-sm bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+              >
+                {addUserBusy ? 'Wird angelegt…' : 'Benutzer anlegen'}
+              </button>
+              <button
+                type="button" onClick={() => setShowAddUser(false)}
+                className="px-4 py-2 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Abbrechen
+              </button>
+            </div>
+          </form>
+        )}
+
+        {addUserInfo && (
+          <div className="p-4 bg-green-50 border-b border-green-200">
+            <p className="text-sm text-green-800">{addUserInfo}</p>
+          </div>
+        )}
 
         {/* Members List */}
         <div className="divide-y divide-gray-200">

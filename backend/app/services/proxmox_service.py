@@ -747,6 +747,55 @@ class ProxmoxService:
             logger.error(f"Failed to get task status for {task_id}: {e}")
             raise
 
+    def wait_for_task(
+        self,
+        node: str,
+        task_id: str,
+        timeout: int = 300,
+        poll_interval: float = 1.0,
+    ) -> Dict[str, Any]:
+        """
+        Block until a Proxmox task (UPID) has finished.
+
+        Needed because Proxmox locks a VM while it is being created: configuring
+        or attaching disks immediately after `qemu.create` fails with
+        "500 Internal Server Error: VM is locked (create)".
+
+        Args:
+            node: Node the task runs on
+            task_id: Task UPID returned by Proxmox
+            timeout: Maximum seconds to wait
+            poll_interval: Seconds between status polls
+
+        Returns:
+            Final task status dict
+
+        Raises:
+            TimeoutError: If the task did not finish in time
+            Exception: If the task exited with a non-OK status
+        """
+        import time
+
+        deadline = time.time() + timeout
+        last_status: Dict[str, Any] = {}
+
+        while time.time() < deadline:
+            last_status = self.get_task_status(node, task_id)
+            if last_status.get("status") == "stopped":
+                exitstatus = last_status.get("exitstatus", "")
+                if exitstatus and exitstatus != "OK":
+                    raise Exception(
+                        f"Proxmox task {task_id} failed on node {node}: {exitstatus}"
+                    )
+                logger.info(f"Proxmox task {task_id} finished: {exitstatus or 'OK'}")
+                return last_status
+            time.sleep(poll_interval)
+
+        raise TimeoutError(
+            f"Proxmox task {task_id} on node {node} did not finish within {timeout}s "
+            f"(last status: {last_status})"
+        )
+
     def delete_iso(self, node: str, volid: str) -> Dict[str, Any]:
         """
         Delete an ISO file from Proxmox storage.

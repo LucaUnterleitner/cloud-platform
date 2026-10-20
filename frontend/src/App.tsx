@@ -1,5 +1,7 @@
+import { useEffect } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './stores/authStore'
+import { authApi, organizationsApi } from './services/api'
 import Layout from './components/Layout'
 import LoginPage from './pages/LoginPage'
 import DashboardPage from './pages/DashboardPage'
@@ -16,7 +18,50 @@ import NetworksPage from './pages/NetworksPage'
 import ContainersPage from './pages/ContainersPage'
 
 function App() {
-  const { isAuthenticated } = useAuthStore()
+  const {
+    isAuthenticated,
+    accessToken,
+    user,
+    currentOrganization,
+    updateUser,
+    setOrganizations,
+    setCurrentOrganization,
+  } = useAuthStore()
+
+  // Restore the session after a page reload: the token survives in localStorage,
+  // but user/organizations only live in memory. Without this the UI shows
+  // "Welcome back, !" and "Limited Access" after pressing F5.
+  useEffect(() => {
+    if (!accessToken) return
+    let active = true
+
+    ;(async () => {
+      try {
+        if (!user) {
+          const me = await authApi.getCurrentUser()
+          if (active) updateUser(me)
+        }
+
+        const memberships = await organizationsApi.listMyOrganizations()
+        if (!active) return
+        setOrganizations(memberships)
+
+        const stillValid =
+          currentOrganization &&
+          memberships.some((m: any) => m.organization.id === currentOrganization.id)
+        if (!stillValid && memberships.length > 0) {
+          setCurrentOrganization(memberships[0].organization)
+        }
+      } catch {
+        // 401 is handled by the axios interceptor (refresh/logout)
+      }
+    })()
+
+    return () => {
+      active = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accessToken])
 
   return (
     <Routes>

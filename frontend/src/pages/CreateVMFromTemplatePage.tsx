@@ -32,7 +32,7 @@ export default function CreateVMFromTemplatePage() {
       setError(err.response?.data?.detail || 'Clone failed'),
   })
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = (e: FormEvent) => {
     e.preventDefault()
     setError('')
 

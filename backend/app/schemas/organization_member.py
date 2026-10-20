@@ -3,7 +3,7 @@ Pydantic schemas for organization membership.
 """
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 class MemberInviteRequest(BaseModel):
@@ -71,3 +71,13 @@ class OrganizationMembershipResponse(BaseModel):
     organization: OrganizationInfo
     role: str
     joined_at: Optional[datetime] = None
+
+
+class OrgUserCreateRequest(BaseModel):
+    """Create a user account and add it to the organization in one step."""
+    email: EmailStr = Field(..., description="Login e-mail of the new user")
+    username: Optional[str] = Field(None, min_length=3, max_length=50, description="Defaults to the e-mail prefix")
+    password: Optional[str] = Field(None, min_length=8, max_length=128, description="Required if the user does not exist yet")
+    role: str = Field("member", pattern="^(admin|member|viewer)$")
+    first_name: Optional[str] = Field(None, max_length=100)
+    last_name: Optional[str] = Field(None, max_length=100)

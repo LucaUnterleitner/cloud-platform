@@ -444,6 +444,71 @@ def _parse_disk_size_gb(config: dict) -> int:
     return 0
 
 
+@router.get("/presets")
+async def list_vm_presets(
+    org_context: OrgContext = Depends(RequirePermission(Permission.VM_READ)),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """
+    Return the flavor catalog plus the free quota of the organization.
+
+    The GUI uses the presets as "sizes" and the quota values as upper bounds
+    for the custom form, so a user can never configure more than allowed.
+
+    Requires: VM_READ permission
+    """
+    from app.core.flavors import (
+        MAX_CORES,
+        MAX_DISK_GB,
+        MAX_MEMORY_MB,
+        MIN_CORES,
+        MIN_DISK_GB,
+        MIN_MEMORY_MB,
+        flavor_catalog,
+        EXTRA_VOLUMES,
+    )
+
+    quota_service = QuotaService(db)
+    quotas = await quota_service.get_all_quotas(org_context.org_id)
+
+    remaining = {
+        quota.resource_type: {
+            "used": quota.used_value,
+            "limit": quota.limit_value,
+            "remaining": quota.remaining,
+        }
+        for quota in quotas
+    }
+
+    # Free quota defines the hard ceiling for the custom form
+    free_cores = int(remaining.get("cpu_cores", {}).get("remaining", 0))
+    free_memory_mb = int(remaining.get("memory_gb", {}).get("remaining", 0) * 1024)
+    free_storage_gb = int(remaining.get("storage_gb", {}).get("remaining", 0))
+
+    return {
+        "presets": flavor_catalog(),
+        "extra_volumes": EXTRA_VOLUMES,
+        "quota": remaining,
+        "limits": {
+            "cpu_cores": {
+                "min": MIN_CORES,
+                "max": max(0, min(MAX_CORES, free_cores)),
+                "free": free_cores,
+            },
+            "memory_mb": {
+                "min": MIN_MEMORY_MB,
+                "max": max(0, min(MAX_MEMORY_MB, free_memory_mb)),
+                "free": free_memory_mb,
+            },
+            "disk_gb": {
+                "min": MIN_DISK_GB,
+                "max": max(0, min(MAX_DISK_GB, free_storage_gb)),
+                "free": free_storage_gb,
+            },
+        },
+    }
+
+
 @router.get("/templates", response_model=List[dict])
 async def list_vm_templates(
     cluster_id: Optional[str] = Query(None, description="Proxmox cluster to query"),

@@ -33,11 +33,17 @@ export default function DiskConfigurationSection({
     ? totalStorageQuota - usedStorageQuota - totalDiskSize
     : null
 
+  const preferredStoragePool = (pools?: any[]) => {
+    // LabCloud: use the fast local pool by default, fall back to the first pool
+    const names = (pools || []).map((p: any) => p.storage_name)
+    return names.includes('fast-local') ? 'fast-local' : names[0]
+  }
+
   const addDisk = () => {
     const newDisk: Disk = {
       id: `disk-${Date.now()}`,
       size_gb: 40,
-      storage_pool: storagePools?.data?.[0]?.storage_name || 'local-lvm',
+      storage_pool: preferredStoragePool(storagePools?.data) || 'fast-local',
       disk_interface: 'scsi',
       is_boot_disk: disks.length === 0, // First disk is boot disk
     }

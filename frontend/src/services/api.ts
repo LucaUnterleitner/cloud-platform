@@ -148,6 +148,32 @@ export const vmsApi = {
     return response.data
   },
 
+  // Flavor presets ("sizes") + free quota, used by the create-VM page
+  listPresets: async () => {
+    const response = await api.get('/vms/presets')
+    return response.data as {
+      presets: Array<{
+        id: string
+        label: string
+        description: string
+        cpu_cores: number
+        memory_mb: number
+        disk_gb: number
+        storage_pool: string
+        vm_type: string
+        os_type: string
+        template_vmid?: number
+      }>
+      extra_volumes: Array<{ id: string; label: string; size_gb: number; storage_pool: string }>
+      quota: Record<string, { used: number; limit: number; remaining: number }>
+      limits: {
+        cpu_cores: { min: number; max: number; free: number }
+        memory_mb: { min: number; max: number; free: number }
+        disk_gb: { min: number; max: number; free: number }
+      }
+    }
+  },
+
   listTemplates: async () => {
     const response = await api.get('/vms/templates')
     return response.data as Array<{
@@ -319,6 +345,19 @@ export const organizationsApi = {
 
   listMembers: async () => {
     const response = await api.get('/organizations/members')
+    return response.data
+  },
+
+  // Create a user account (if needed) and add it to the current organization
+  createUser: async (data: {
+    email: string
+    username?: string
+    password?: string
+    role: string
+    first_name?: string
+    last_name?: string
+  }) => {
+    const response = await api.post('/organizations/users', data)
     return response.data
   },
 

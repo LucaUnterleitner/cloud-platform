@@ -185,6 +185,22 @@ def provision_vm_with_disks(self, vm_id: str):
 
             logger.info(f"Base VM created: {result}")
 
+            # Proxmox locks the VM while creating it – wait for the task, otherwise
+            # the next API call fails with "VM is locked (create)".
+            if isinstance(result, dict) and result.get("task_id"):
+                try:
+                    proxmox.wait_for_task(
+                        node=vm.proxmox_node,
+                        task_id=result["task_id"],
+                        timeout=300,
+                    )
+                    logger.info(f"VM {vm.proxmox_vmid} unlocked after create")
+                except Exception as wait_error:
+                    logger.error(
+                        f"Waiting for create task of VM {vm.proxmox_vmid} failed: {wait_error}"
+                    )
+                    raise
+
             # Step 2: Add each disk
             boot_devices = []
             cdrom_device = None
