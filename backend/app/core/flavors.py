@@ -24,6 +24,32 @@ MAX_MEMORY_MB = 262144
 MIN_DISK_GB = 10
 MAX_DISK_GB = 1024
 
+# Hard per-VM disk limit per storage pool.
+#
+# `fast-local` is the 1 TB thin pool that every tenant uses for boot disks; a
+# single VM must never grab more than 150 GB of it (docs/LabCloud_Plan.md §7).
+# Bigger volumes belong on `capacity-nfs` (RAID5/NFS, slower but 14 TB).
+STORAGE_MAX_DISK_GB: Dict[str, int] = {
+    "fast-local": 150,
+    "capacity-nfs": 5000,
+    "local": 150,
+    "qnap-backup": 0,  # backups only, no VM disks
+}
+
+STORAGE_NOTES: Dict[str, str] = {
+    "fast-local": (
+        "Schneller Pool (lokale SSDs, 1 TB Thin-Provisioning). "
+        "Maximal 150 GB pro VM - größere Disks auf capacity-nfs legen."
+    ),
+    "capacity-nfs": (
+        "Kapazitäts-Pool (NFS/RAID5, 14 TB). Für große Volumes, langsamer als fast-local."
+    ),
+    "local": "Lokale Systemplatte des Proxmox-Hosts - nur für kleine Test-VMs.",
+}
+
+# Fallback for pools that are not listed above.
+DEFAULT_MAX_DISK_GB = 150
+
 FLAVORS: List[Dict[str, Any]] = [
     {
         "id": "lxc-small",
@@ -84,6 +110,26 @@ def get_flavor(flavor_id: str) -> Optional[Dict[str, Any]]:
         if flavor["id"] == flavor_id:
             return flavor
     return None
+
+
+def max_disk_gb_for(storage_pool: Optional[str]) -> int:
+    """Per-VM disk limit for a storage pool (GB)."""
+    if not storage_pool:
+        return DEFAULT_MAX_DISK_GB
+    return STORAGE_MAX_DISK_GB.get(storage_pool, DEFAULT_MAX_DISK_GB)
+
+
+def storage_limits() -> List[Dict[str, Any]]:
+    """Storage pools with their per-VM disk limit, for the GUI."""
+    return [
+        {
+            "storage": name,
+            "max_disk_gb": limit,
+            "note": STORAGE_NOTES.get(name, ""),
+        }
+        for name, limit in STORAGE_MAX_DISK_GB.items()
+        if limit
+    ]
 
 
 def get_extra_volume(volume_id: str) -> Optional[Dict[str, Any]]:

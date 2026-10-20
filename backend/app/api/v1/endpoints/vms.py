@@ -1,7 +1,7 @@
 """
 Virtual Machine management endpoints.
 """
-from typing import Optional, List
+from typing import Optional, List, Iterable
 from datetime import datetime
 import asyncio
 import logging
@@ -64,6 +64,42 @@ async def _enforce_user_quota(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Persönliches Kontingent überschritten: " + "; ".join(violations),
+        )
+
+
+def _enforce_disk_limits(disks: Iterable) -> None:
+    """Reject disks that are bigger than the pool's per-VM limit.
+
+    `fast-local` is a shared thin pool: one VM must not allocate more than
+    150 GB there (see ``app.core.flavors.STORAGE_MAX_DISK_GB``).
+    """
+    from app.core.flavors import max_disk_gb_for
+
+    violations = []
+    for disk in disks:
+        size_gb = disk.size_gb if hasattr(disk, "size_gb") else disk.get("size_gb")
+        pool = (
+            getattr(disk, "storage_pool", None)
+            if hasattr(disk, "storage_pool")
+            else disk.get("storage_pool")
+        )
+        if not size_gb:
+            continue
+        limit = max_disk_gb_for(pool)
+        if size_gb > limit:
+            violations.append(
+                f"{pool or 'Standard-Pool'}: {size_gb} GB angefordert, "
+                f"maximal {limit} GB pro VM"
+            )
+
+    if violations:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "Speichergrenze überschritten: "
+                + "; ".join(violations)
+                + ". Größere Volumes bitte auf 'capacity-nfs' anlegen."
+            ),
         )
 
 
@@ -204,6 +240,9 @@ async def create_vm(
     """
     # 1. Calculate total storage from all disks
     total_storage_gb = sum(disk.size_gb for disk in vm_data.disks)
+
+    # 1.0b. Per-pool disk limit (fast-local: 150 GB per VM)
+    _enforce_disk_limits(vm_data.disks)
 
     # 1.1. Validate ISO access if provided
     iso_image = None
@@ -508,6 +547,7 @@ async def list_vm_presets(
         MIN_DISK_GB,
         MIN_MEMORY_MB,
         flavor_catalog,
+        storage_limits,
         EXTRA_VOLUMES,
     )
 
@@ -551,6 +591,9 @@ async def list_vm_presets(
     return {
         "presets": flavor_catalog(),
         "extra_volumes": EXTRA_VOLUMES,
+        # Per-VM disk limit per storage pool (fast-local: 150 GB) - the GUI
+        # shows this next to the disk form so nobody has to guess.
+        "storage_limits": storage_limits(),
         "quota": remaining,
         "personal_quota": personal,
         "limits": {

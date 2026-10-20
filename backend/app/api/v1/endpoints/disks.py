@@ -122,6 +122,20 @@ async def attach_disk_to_vm(
             detail=f"Quota exceeded: {', '.join(quota_check.exceeded_resources)}"
         )
 
+    # Per-pool disk limit (fast-local: 150 GB per disk)
+    from app.core.flavors import max_disk_gb_for
+
+    disk_limit = max_disk_gb_for(disk_data.storage_pool)
+    if disk_data.size_gb > disk_limit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Speichergrenze überschritten: {disk_data.storage_pool or 'Standard-Pool'} "
+                f"erlaubt maximal {disk_limit} GB pro Disk (angefordert: {disk_data.size_gb} GB). "
+                "Größere Volumes bitte auf 'capacity-nfs' anlegen."
+            )
+        )
+
     # Get next available disk index (check all disks including soft-deleted)
     result = await db.execute(
         select(VMDisk).where(
@@ -495,6 +509,20 @@ async def resize_vm_disk(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"New size must be larger than current size ({disk.size_gb}GB)"
+        )
+
+    # Per-pool disk limit (fast-local: 150 GB per disk)
+    from app.core.flavors import max_disk_gb_for
+
+    disk_limit = max_disk_gb_for(disk.storage_pool)
+    if resize_data.new_size_gb > disk_limit:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                f"Speichergrenze überschritten: {disk.storage_pool} erlaubt maximal "
+                f"{disk_limit} GB pro Disk (angefordert: {resize_data.new_size_gb} GB). "
+                "Größere Volumes bitte auf 'capacity-nfs' anlegen."
+            )
         )
 
     # Check quota for additional storage

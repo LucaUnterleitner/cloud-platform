@@ -72,6 +72,7 @@ export default function CreateVMPage() {
 
   const presets = (presetData?.presets || []).filter((p) => p.vm_type === 'qemu')
   const limits = presetData?.limits
+  const storageLimits = presetData?.storage_limits || []
   const personalLimits = (presetData?.personal_quota?.resources || []).filter(
     (r) => r.limit !== null && r.limit !== undefined
   )
@@ -145,6 +146,17 @@ export default function CreateVMPage() {
       if (totalDiskGb > limits.disk_gb.free) {
         setError(
           `Nicht genug Storage-Kontingent: ${totalDiskGb} GB angefordert, frei sind ${limits.disk_gb.free} GB.`
+        )
+        return
+      }
+    }
+
+    // Per-pool disk limit (fast-local: 150 GB per VM) - backend checks again
+    for (const disk of disks) {
+      const limit = storageLimits.find((l) => l.storage === disk.storage_pool)
+      if (limit && disk.size_gb > limit.max_disk_gb) {
+        setError(
+          `Speichergrenze überschritten: ${disk.storage_pool} erlaubt maximal ${limit.max_disk_gb} GB pro VM (angefordert: ${disk.size_gb} GB). Größere Volumes bitte auf capacity-nfs anlegen.`
         )
         return
       }
@@ -388,6 +400,13 @@ export default function CreateVMPage() {
                                   {preset.storage_pool}
                                 </span>
                               </p>
+                              {storageLimits.find((l) => l.storage === preset.storage_pool) && (
+                                <p className="text-xs text-gray-500">
+                                  max.{' '}
+                                  {storageLimits.find((l) => l.storage === preset.storage_pool)!.max_disk_gb}{' '}
+                                  GB pro VM
+                                </p>
+                              )}
                             </div>
                             {!fitsQuota && (
                               <p className="mt-2 text-xs font-medium text-red-600">
@@ -460,6 +479,7 @@ export default function CreateVMPage() {
               onDisksChange={setDisks}
               totalStorageQuota={storageQuota?.limit_value}
               usedStorageQuota={storageQuota?.used_value}
+              storageLimits={storageLimits}
             />
 
             {/* Network Configuration */}

@@ -165,6 +165,8 @@ export const vmsApi = {
         template_vmid?: number
       }>
       extra_volumes: Array<{ id: string; label: string; size_gb: number; storage_pool: string }>
+      // Per-VM disk limit per storage pool (fast-local: 150 GB)
+      storage_limits: Array<{ storage: string; max_disk_gb: number; note: string }>
       quota: Record<string, { used: number; limit: number; remaining: number }>
       personal_quota?: {
         user_id: string

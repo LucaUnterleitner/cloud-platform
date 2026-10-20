@@ -108,6 +108,19 @@ export default function QuotaPage() {
         </button>
       </div>
 
+      {/* Speichergrenze pro VM - the number people always ask about */}
+      <div className="mb-6 rounded-lg bg-indigo-50 border border-indigo-200 p-4">
+        <p className="text-sm font-semibold text-indigo-900">
+          Speichergrenze pro VM
+        </p>
+        <p className="mt-1 text-sm text-indigo-800">
+          <span className="font-mono font-semibold">fast-local</span> (schneller SSD-Pool,
+          1 TB für alle zusammen): <span className="font-semibold">maximal 150 GB pro VM</span>.
+          Größere Volumes auf <span className="font-mono font-semibold">capacity-nfs</span>{' '}
+          anlegen. Das Kontingent oben gilt zusätzlich – es zählt die Summe aller VMs.
+        </p>
+      </div>
+
       {/* Quota Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {quotaUsage.resources.map((resource) => (

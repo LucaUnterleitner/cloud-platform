@@ -9,11 +9,19 @@ interface Disk {
   is_boot_disk: boolean
 }
 
+interface StorageLimit {
+  storage: string
+  max_disk_gb: number
+  note: string
+}
+
 interface DiskConfigurationSectionProps {
   disks: Disk[]
   onDisksChange: (disks: Disk[]) => void
   totalStorageQuota?: number
   usedStorageQuota?: number
+  // Per-VM disk limit per storage pool (fast-local: 150 GB), comes from /vms/presets
+  storageLimits?: StorageLimit[]
 }
 
 export default function DiskConfigurationSection({
@@ -21,6 +29,7 @@ export default function DiskConfigurationSection({
   onDisksChange,
   totalStorageQuota,
   usedStorageQuota,
+  storageLimits = [],
 }: DiskConfigurationSectionProps) {
   // Fetch available storage pools
   const { data: storagePools, isLoading: loadingPools } = useQuery({
@@ -32,6 +41,16 @@ export default function DiskConfigurationSection({
   const remainingQuota = totalStorageQuota && usedStorageQuota !== undefined
     ? totalStorageQuota - usedStorageQuota - totalDiskSize
     : null
+
+  const limitFor = (pool: string) =>
+    storageLimits.find((l) => l.storage === pool)?.max_disk_gb
+  const noteFor = (pool: string) =>
+    storageLimits.find((l) => l.storage === pool)?.note
+
+  const overLimitDisks = disks.filter((d) => {
+    const limit = limitFor(d.storage_pool)
+    return limit !== undefined && d.size_gb > limit
+  })
 
   const preferredStoragePool = (pools?: any[]) => {
     // LabCloud: use the fast local pool by default, fall back to the first pool
@@ -142,6 +161,26 @@ export default function DiskConfigurationSection({
         </div>
       )}
 
+      {/* Per-pool disk limit (fast-local: 150 GB per VM) */}
+      {storageLimits.length > 0 && (
+        <div className="mb-4 rounded-md bg-indigo-50 border border-indigo-200 p-3">
+          <p className="text-sm font-medium text-indigo-900">
+            Speichergrenze pro VM:
+          </p>
+          <ul className="mt-1 space-y-0.5 text-xs text-indigo-800">
+            {storageLimits.map((limit) => (
+              <li key={limit.storage}>
+                <span className="font-mono font-semibold">{limit.storage}</span>
+                {': max. '}
+                <span className="font-semibold">{limit.max_disk_gb} GB</span>
+                {' pro VM'}
+                {limit.note ? ` - ${limit.note}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       {/* Disks List */}
       <div className="space-y-4">
         {disks.map((disk, index) => (
@@ -191,13 +230,31 @@ export default function DiskConfigurationSection({
                 <input
                   type="number"
                   min="10"
-                  max="10240"
+                  max={limitFor(disk.storage_pool) ?? 10240}
                   value={disk.size_gb}
                   onChange={(e) =>
                     updateDisk(disk.id, 'size_gb', parseInt(e.target.value) || 0)
                   }
-                  className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900"
+                  className={`mt-1 block w-full rounded-md shadow-sm focus:ring-indigo-500 sm:text-sm px-3 py-2 border text-gray-900 ${
+                    limitFor(disk.storage_pool) !== undefined &&
+                    disk.size_gb > (limitFor(disk.storage_pool) as number)
+                      ? 'border-red-500 focus:border-red-500'
+                      : 'border-gray-300 focus:border-indigo-500'
+                  }`}
                 />
+                {limitFor(disk.storage_pool) !== undefined && (
+                  <p
+                    className={`mt-1 text-xs ${
+                      disk.size_gb > (limitFor(disk.storage_pool) as number)
+                        ? 'text-red-600 font-medium'
+                        : 'text-gray-500'
+                    }`}
+                  >
+                    max. {limitFor(disk.storage_pool)} GB auf {disk.storage_pool}
+                    {disk.size_gb > (limitFor(disk.storage_pool) as number) &&
+                      ' - Grenze überschritten'}
+                  </p>
+                )}
               </div>
 
               {/* Storage Pool */}
@@ -218,7 +275,9 @@ export default function DiskConfigurationSection({
                       <option key={pool.id} value={pool.storage_name}>
                         {pool.storage_name} ({pool.storage_type})
                         {pool.available_bytes &&
-                          ` - ${Math.round(pool.available_bytes / (1024 ** 3))} GB available`}
+                          ` - ${Math.round(pool.available_bytes / (1024 ** 3))} GB frei`}
+                        {limitFor(pool.storage_name) !== undefined &&
+                          ` - max. ${limitFor(pool.storage_name)} GB/VM`}
                       </option>
                     ))
                   )}
@@ -264,6 +323,12 @@ export default function DiskConfigurationSection({
           <span className="font-medium text-gray-700">Total Storage:</span>
           <span className="font-bold text-indigo-600">{totalDiskSize} GB</span>
         </div>
+        {overLimitDisks.length > 0 && (
+          <p className="mt-2 text-xs font-medium text-red-600">
+            {overLimitDisks.length} Disk(s) überschreiten die Speichergrenze des Pools
+            (fast-local: max. 150 GB pro VM).
+          </p>
+        )}
         {remainingQuota !== null && (
           <div className="flex justify-between text-sm mt-1">
             <span className="text-gray-600">Remaining Quota:</span>
