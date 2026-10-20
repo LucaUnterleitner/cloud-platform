@@ -35,6 +35,38 @@ from app.core.rbac import Role, Permission
 from app.services.proxmox_service import ProxmoxService
 from app.services.quota_service import QuotaService
 
+
+async def _enforce_user_quota(
+    db: AsyncSession,
+    organization_id: str,
+    user_id: str,
+    *,
+    cpu_cores: float = 0,
+    memory_gb: float = 0,
+    storage_gb: float = 0,
+    vm_count: float = 0,
+) -> None:
+    """Reject the request if the member's personal quota would be exceeded."""
+    from app.services.user_quota_service import UserQuotaService
+
+    service = UserQuotaService(db)
+    violations = await service.check_user_quota(
+        organization_id,
+        user_id,
+        {
+            "cpu_cores": cpu_cores,
+            "memory_gb": memory_gb,
+            "storage_gb": storage_gb,
+            "vm_count": vm_count,
+        },
+    )
+    if violations:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Persönliches Kontingent überschritten: " + "; ".join(violations),
+        )
+
+
 router = APIRouter(prefix="/vms", tags=["Virtual Machines"])
 
 
@@ -220,6 +252,17 @@ async def create_vm(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Quota exceeded: {', '.join(quota_check.exceeded_resources)}"
         )
+
+    # 1.3. Personal quota of the requesting user (narrows the organization quota)
+    await _enforce_user_quota(
+        db,
+        org_context.org_id,
+        org_context.user.id,
+        cpu_cores=vm_data.cpu_cores,
+        memory_gb=vm_data.memory_mb / 1024,
+        storage_gb=total_storage_gb,
+        vm_count=1,
+    )
 
     # 2. Select cluster (must be accessible by organization)
     if vm_data.proxmox_cluster_id:
@@ -485,10 +528,31 @@ async def list_vm_presets(
     free_memory_mb = int(remaining.get("memory_gb", {}).get("remaining", 0) * 1024)
     free_storage_gb = int(remaining.get("storage_gb", {}).get("remaining", 0))
 
+    # Personal quota of the requesting user narrows the organization quota further
+    from app.services.user_quota_service import UserQuotaService
+
+    personal = await UserQuotaService(db).get_user_quota(
+        org_context.org_id, org_context.user.id
+    )
+    personal_free: dict = {}
+    for resource in personal["resources"]:
+        limit, used = resource["limit"], resource["used"]
+        if limit is None:
+            continue
+        personal_free[resource["resource_type"]] = max(0.0, limit - used)
+
+    if "cpu_cores" in personal_free:
+        free_cores = min(free_cores, int(personal_free["cpu_cores"]))
+    if "memory_gb" in personal_free:
+        free_memory_mb = min(free_memory_mb, int(personal_free["memory_gb"] * 1024))
+    if "storage_gb" in personal_free:
+        free_storage_gb = min(free_storage_gb, int(personal_free["storage_gb"]))
+
     return {
         "presets": flavor_catalog(),
         "extra_volumes": EXTRA_VOLUMES,
         "quota": remaining,
+        "personal_quota": personal,
         "limits": {
             "cpu_cores": {
                 "min": MIN_CORES,
@@ -602,6 +666,17 @@ async def create_vm_from_template(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Quota exceeded: {', '.join(quota_check.exceeded_resources)}",
         )
+
+    # 3.1. Personal quota of the requesting user subtrahends the org quota
+    await _enforce_user_quota(
+        db,
+        org_context.org_id,
+        org_context.user.id,
+        cpu_cores=cpu_cores,
+        memory_gb=memory_mb / 1024,
+        storage_gb=disk_gb,
+        vm_count=1,
+    )
 
     # 4. Clone on the Proxmox side
     try:
@@ -1417,6 +1492,14 @@ async def resize_vm_resources(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Quota exceeded: {', '.join(quota_check.exceeded_resources)}"
             )
+
+        await _enforce_user_quota(
+            db,
+            org_context.org_id,
+            vm.owner_id or org_context.user.id,
+            cpu_cores=cpu_delta if cpu_delta > 0 else 0,
+            memory_gb=(memory_delta / 1024) if memory_delta > 0 else 0,
+        )
 
     # Resize VM on Proxmox
     try:

@@ -166,6 +166,17 @@ export const vmsApi = {
       }>
       extra_volumes: Array<{ id: string; label: string; size_gb: number; storage_pool: string }>
       quota: Record<string, { used: number; limit: number; remaining: number }>
+      personal_quota?: {
+        user_id: string
+        organization_id: string
+        resources: Array<{
+          resource_type: string
+          resource_name: string
+          limit: number | null
+          used: number
+          remaining: number | null
+        }>
+      }
       limits: {
         cpu_cores: { min: number; max: number; free: number }
         memory_mb: { min: number; max: number; free: number }
@@ -385,6 +396,44 @@ export const quotasApi = {
 
   getUsage: async () => {
     const response = await api.get('/quotas/usage')
+    return response.data
+  },
+
+  // --- Personal (per user) quotas -------------------------------------------
+  getMemberQuotas: async () => {
+    const response = await api.get('/quotas/members')
+    return response.data as Array<{
+      user_id: string
+      role: string
+      resources: Array<{
+        resource_type: string
+        resource_name: string
+        limit: number | null
+        used: number
+        remaining: number | null
+      }>
+    }>
+  },
+
+  getUserQuota: async (userId: string) => {
+    const response = await api.get(`/quotas/users/${userId}`)
+    return response.data as {
+      user_id: string
+      organization_id: string
+      resources: Array<{
+        resource_type: string
+        resource_name: string
+        limit: number | null
+        used: number
+        remaining: number | null
+      }>
+    }
+  },
+
+  setUserQuota: async (userId: string, resourceType: string, limitValue: number | null) => {
+    const response = await api.put(`/quotas/users/${userId}/${resourceType}`, {
+      limit_value: limitValue,
+    })
     return response.data
   },
 

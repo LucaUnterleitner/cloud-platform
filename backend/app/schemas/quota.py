@@ -11,6 +11,29 @@ class QuotaUpdateRequest(BaseModel):
     limit_value: float = Field(..., ge=0, description="New quota limit (must be non-negative)")
 
 
+class UserQuotaResource(BaseModel):
+    """One resource of a personal quota."""
+    resource_type: str
+    resource_name: str
+    limit: Optional[float] = Field(None, description="NULL = unbegrenzt (nur Org-Limit)")
+    used: float
+    remaining: Optional[float] = None
+
+
+class UserQuotaResponse(BaseModel):
+    """Personal quota of one member."""
+    user_id: str
+    organization_id: str
+    resources: List[UserQuotaResource]
+
+
+class UserQuotaUpdateRequest(BaseModel):
+    """Set or clear the personal limit of one resource."""
+    limit_value: Optional[float] = Field(
+        None, description="Neues Limit; null = persönliche Grenze entfernen"
+    )
+
+
 class QuotaResponse(BaseModel):
     """Response for single quota."""
     id: str

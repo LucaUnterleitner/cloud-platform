@@ -3,6 +3,7 @@ Quota management endpoints.
 """
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -16,11 +17,15 @@ from app.core.deps import (
 )
 from app.core.rbac import Permission
 from app.services.quota_service import QuotaService
+from app.services.user_quota_service import UserQuotaService
+from app.models.organization_member import OrganizationMember
 from app.schemas.quota import (
     QuotaResponse,
     QuotaUsageResponse,
     QuotaResourceUsage,
-    QuotaUpdateRequest
+    QuotaUpdateRequest,
+    UserQuotaResponse,
+    UserQuotaUpdateRequest,
 )
 
 router = APIRouter(prefix="/quotas", tags=["Quotas"])
@@ -78,6 +83,102 @@ async def get_quota_usage(
         )
 
     return usage_data
+
+
+@router.get("/members", response_model=List[dict])
+async def get_member_quotas(
+    org_context: OrgContext = Depends(RequirePermission(Permission.QUOTA_READ)),
+    db: AsyncSession = Depends(get_db)
+) -> List[dict]:
+    """
+    Personal quotas + current usage of all members of the organization.
+
+    Members without personal limits are only bound by the organization quota.
+
+    Requires: QUOTA_READ permission
+    """
+    members_result = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.organization_id == org_context.org_id,
+            OrganizationMember.deleted_at.is_(None)
+        )
+    )
+    members = members_result.scalars().all()
+
+    service = UserQuotaService(db)
+    result: List[dict] = []
+    for member in members:
+        quota = await service.get_user_quota(org_context.org_id, member.user_id)
+        result.append({**quota, "role": member.role})
+    return result
+
+
+@router.get("/users/{user_id}", response_model=UserQuotaResponse)
+async def get_user_quota(
+    user_id: str,
+    org_context: OrgContext = Depends(RequirePermission(Permission.QUOTA_READ)),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Personal quota of a single member (limit, usage, remaining).
+
+    Requires: QUOTA_READ permission
+    """
+    result = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.user_id == user_id,
+            OrganizationMember.organization_id == org_context.org_id,
+            OrganizationMember.deleted_at.is_(None)
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Benutzer ist kein Mitglied dieser Organisation."
+        )
+
+    service = UserQuotaService(db)
+    return await service.get_user_quota(org_context.org_id, user_id)
+
+
+@router.put("/users/{user_id}/{resource_type}", response_model=dict)
+async def set_user_quota(
+    user_id: str,
+    resource_type: str,
+    payload: UserQuotaUpdateRequest,
+    org_context: OrgContext = Depends(RequirePermission(Permission.QUOTA_UPDATE)),
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """
+    Set or clear the personal limit of a member.
+
+    ``limit_value = null`` removes the personal limit (user is then only bound by
+    the organization quota). A personal limit can only narrow, never widen.
+
+    Requires: QUOTA_UPDATE permission
+    """
+    result = await db.execute(
+        select(OrganizationMember).where(
+            OrganizationMember.user_id == user_id,
+            OrganizationMember.organization_id == org_context.org_id,
+            OrganizationMember.deleted_at.is_(None)
+        )
+    )
+    if result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Benutzer ist kein Mitglied dieser Organisation."
+        )
+
+    service = UserQuotaService(db)
+    try:
+        await service.set_limit(
+            org_context.org_id, user_id, resource_type, payload.limit_value
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+
+    return await service.get_user_quota(org_context.org_id, user_id)
 
 
 @router.put("/{resource_type}", response_model=QuotaResponse)

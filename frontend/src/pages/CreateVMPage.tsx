@@ -72,6 +72,9 @@ export default function CreateVMPage() {
 
   const presets = (presetData?.presets || []).filter((p) => p.vm_type === 'qemu')
   const limits = presetData?.limits
+  const personalLimits = (presetData?.personal_quota?.resources || []).filter(
+    (r) => r.limit !== null && r.limit !== undefined
+  )
 
   const [sizeMode, setSizeMode] = useState<'preset' | 'custom'>('preset')
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null)
@@ -331,6 +334,11 @@ export default function CreateVMPage() {
                       {limits.disk_gb.free} GB Storage
                     </span>
                   </div>
+                  {personalLimits.length > 0 && (
+                    <p className="mt-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1 inline-block">
+                      Persönliches Kontingent: {personalLimits.map((r) => `${r.limit} ${r.resource_name}`).join(' / ')}
+                    </p>
+                  )}
                 </div>
               )}
 

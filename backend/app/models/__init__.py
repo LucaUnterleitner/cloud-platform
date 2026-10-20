@@ -6,6 +6,7 @@ from app.models.user import User
 from app.models.organization import Organization
 from app.models.organization_member import OrganizationMember
 from app.models.resource_quota import ResourceQuota
+from app.models.user_quota import UserQuota
 from app.models.proxmox_cluster import ProxmoxCluster
 from app.models.virtual_machine import VirtualMachine
 from app.models.iso_image import ISOImage
@@ -24,6 +25,7 @@ __all__ = [
     "Organization",
     "OrganizationMember",
     "ResourceQuota",
+    "UserQuota",
     "ProxmoxCluster",
     "VirtualMachine",
     "ISOImage",
